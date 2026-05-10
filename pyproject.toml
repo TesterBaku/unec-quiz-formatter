@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quiz-formatter-with-chatgpt"
+version = "0.1.0"
+description = "Parse multiple-choice questions from PDFs and run terminal quizzes."
+requires-python = ">=3.12"
+dependencies = [
+  "pypdf>=6.11.0"
+]
+
+[project.scripts]
+quiz-pdf = "quiz_formatter.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pyinstaller>=6.20.0",
+  "pytest>=9.0.3"
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src"
+]
+testpaths = [
+  "tests"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
