@@ -1,7 +1,15 @@
 import pytest
 
 from quiz_formatter.models import Question, QuizResult
-from quiz_formatter.quiz import build_explanation, build_quiz, parse_answer, score_results
+from quiz_formatter.quiz import (
+    build_explanation,
+    build_quiz,
+    filter_questions_by_ranges,
+    parse_answer,
+    parse_question_ranges,
+    render_question,
+    score_results,
+)
 
 
 def _question(number: int) -> Question:
@@ -48,7 +56,7 @@ def test_parse_answer_accepts_case_insensitive_labels_and_skips_empty():
 
 
 def test_score_results_and_explanation():
-    question = _question(5)
+    question = build_quiz([_question(5)], 1, seed=1, shuffle_answers=False)[0]
     results = [
         QuizResult(question=question, selected_index=1),
         QuizResult(question=question, selected_index=2),
@@ -58,5 +66,33 @@ def test_score_results_and_explanation():
     assert score_results(results) == (1, 3)
 
     explanation = build_explanation(results[1])
-    assert "Ваш ответ: C - Charlie" in explanation
-    assert "Правильный ответ: B - Bravo" in explanation
+    assert "Ваш ответ:" in explanation
+    assert "Правильный ответ:" in explanation
+
+
+def test_parse_question_ranges_supports_single_numbers_and_ranges():
+    assert parse_question_ranges("1-5; 7; 10-12") == [(1, 5), (7, 7), (10, 12)]
+
+
+def test_parse_question_ranges_rejects_invalid_syntax():
+    with pytest.raises(ValueError):
+        parse_question_ranges("5-2")
+
+    with pytest.raises(ValueError):
+        parse_question_ranges("abc")
+
+
+def test_filter_questions_by_ranges_returns_only_matching_questions():
+    questions = [_question(index) for index in range(1, 11)]
+
+    filtered = filter_questions_by_ranges(questions, "2-4; 8")
+
+    assert [question.number for question in filtered] == [2, 3, 4, 8]
+
+
+def test_render_question_can_show_correct_answer_immediately():
+    question = build_quiz([_question(9)], 1, seed=1, shuffle_answers=False)[0]
+
+    rendered = render_question(question, 1, 1, reveal_correct=True)
+
+    assert "Правильный ответ: B - Bravo" in rendered

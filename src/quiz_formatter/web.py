@@ -11,7 +11,15 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from .history import load_history, save_history
 from .models import PresentedQuestion, Question, QuizResult
-from .quiz import build_explanation, build_quiz, label_for_option, parse_answer, score_results
+from .quiz import (
+    build_correct_answer_text,
+    build_explanation,
+    build_quiz,
+    filter_questions_by_ranges,
+    label_for_option,
+    parse_answer,
+    score_results,
+)
 
 PAGE_STYLE = """
 <style>
@@ -21,9 +29,11 @@ PAGE_STYLE = """
     --panel: rgba(255, 250, 244, 0.92);
     --accent: #b1442b;
     --accent-soft: #f4c8ad;
+    --accent-pale: rgba(244, 200, 173, 0.38);
     --edge: #241a15;
     --muted: #6f6057;
     --good: #27593d;
+    --good-soft: rgba(39, 89, 61, 0.12);
     --bad: #8b2e1d;
     --shadow: 0 18px 50px rgba(44, 24, 14, 0.14);
     --paper-shadow: inset 0 0 0 1px rgba(36, 26, 21, 0.08);
@@ -93,7 +103,7 @@ PAGE_STYLE = """
 
   h1 {
     font-size: clamp(2.3rem, 5vw, 4.6rem);
-    max-width: 10ch;
+    max-width: 11ch;
   }
 
   .lede {
@@ -109,6 +119,7 @@ PAGE_STYLE = """
     grid-template-columns: 1.1fr 0.9fr;
     gap: 24px;
     margin-top: 28px;
+    align-items: start;
   }
 
   .panel, .history-card, .question-card {
@@ -123,7 +134,16 @@ PAGE_STYLE = """
   }
 
   .panel.compact {
-    gap: 12px;
+    gap: 2px;
+    align-content: start;
+  }
+
+  .panel.compact h2 {
+    margin: 0;
+  }
+
+  .panel.compact form {
+    margin: 0;
   }
 
   .stack {
@@ -133,6 +153,7 @@ PAGE_STYLE = """
 
   .form-stack {
     gap: 14px;
+    margin-top: 0;
   }
 
   label {
@@ -270,7 +291,7 @@ PAGE_STYLE = """
     margin-bottom: 6px;
   }
 
-  .history-list, .explanation-list, .result-list {
+  .history-list, .result-list {
     display: grid;
     gap: 16px;
   }
@@ -319,6 +340,35 @@ PAGE_STYLE = """
     margin-top: 4px;
   }
 
+  .option.correct {
+    border-color: rgba(39, 89, 61, 0.4);
+    background: var(--good-soft);
+  }
+
+  .option.correct .option-note {
+    display: inline-flex;
+  }
+
+  .option-note {
+    display: none;
+    margin-top: 8px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(39, 89, 61, 0.14);
+    color: var(--good);
+    font-size: 0.78rem;
+    font-weight: 800;
+  }
+
+  .correct-banner {
+    margin-top: 14px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    border-left: 5px solid var(--good);
+    background: rgba(39, 89, 61, 0.08);
+    font-weight: 700;
+  }
+
   .badge {
     display: inline-flex;
     align-items: center;
@@ -360,6 +410,10 @@ PAGE_STYLE = """
     .masthead, .panel, .question-card, .history-card {
       border-radius: 22px;
     }
+
+    .count-row {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
 <script>
@@ -386,21 +440,47 @@ class QuizSession:
     count: int
     seed: int | None
     shuffle_answers: bool
+    range_spec: str
+    reveal_answers: bool
     results: list[QuizResult] | None = None
     history_saved: bool = False
 
 
 class QuizAppState:
-    def __init__(self, questions: list[Question], pdf_path: Path, history_path: str | Path) -> None:
+    def __init__(
+        self,
+        questions: list[Question],
+        pdf_path: Path,
+        history_path: str | Path,
+        default_count: int = 10,
+        default_ranges: str = "",
+        default_reveal_answers: bool = False,
+        default_shuffle_answers: bool = True,
+    ) -> None:
         self.questions = questions
         self.pdf_path = Path(pdf_path)
         self.history_path = Path(history_path)
+        self.default_count = default_count
+        self.default_ranges = default_ranges
+        self.default_reveal_answers = default_reveal_answers
+        self.default_shuffle_answers = default_shuffle_answers
         self.sessions: dict[str, QuizSession] = {}
 
-    def create_session(self, count: int, seed: int | None, shuffle_answers: bool) -> str:
+    def create_session(
+        self,
+        count: int,
+        seed: int | None,
+        shuffle_answers: bool,
+        range_spec: str,
+        reveal_answers: bool,
+    ) -> str:
+        filtered_questions = filter_questions_by_ranges(self.questions, range_spec)
+        if not filtered_questions:
+            raise ValueError("По указанным диапазонам не найдено ни одного вопроса.")
+
         session_id = secrets.token_urlsafe(12)
         selected_questions = build_quiz(
-            self.questions,
+            filtered_questions,
             count=count,
             seed=seed,
             shuffle_answers=shuffle_answers,
@@ -410,6 +490,8 @@ class QuizAppState:
             count=count,
             seed=seed,
             shuffle_answers=shuffle_answers,
+            range_spec=range_spec.strip(),
+            reveal_answers=reveal_answers,
         )
         return session_id
 
@@ -420,8 +502,20 @@ def serve_web_app(
     host: str,
     port: int,
     history_path: str | Path,
+    default_count: int = 10,
+    default_ranges: str = "",
+    default_reveal_answers: bool = False,
+    default_shuffle_answers: bool = True,
 ) -> int:
-    state = QuizAppState(questions=questions, pdf_path=pdf_path, history_path=history_path)
+    state = QuizAppState(
+        questions=questions,
+        pdf_path=pdf_path,
+        history_path=history_path,
+        default_count=default_count,
+        default_ranges=default_ranges,
+        default_reveal_answers=default_reveal_answers,
+        default_shuffle_answers=default_shuffle_answers,
+    )
     server = ThreadingHTTPServer((host, port), _build_handler(state))
     print(f"Веб-интерфейс викторины запущен по адресу http://{host}:{port}")
     print("Нажмите Ctrl+C, чтобы остановить сервер.")
@@ -482,11 +576,15 @@ def _build_handler(state: QuizAppState) -> type[BaseHTTPRequestHandler]:
         def _render_home(self) -> None:
             history_entries = load_history(state.history_path, limit=8)
             body = _page_shell(
-                title="Paper Trail Quiz Lab",
+                title="Лаборатория Викторин",
                 content=_home_markup(
                     pdf_name=state.pdf_path.name,
                     question_count=len(state.questions),
                     history_entries=history_entries,
+                    default_count=state.default_count,
+                    default_ranges=state.default_ranges,
+                    default_reveal_answers=state.default_reveal_answers,
+                    default_shuffle_answers=state.default_shuffle_answers,
                 ),
             )
             self._send_html("Главная", body)
@@ -494,10 +592,10 @@ def _build_handler(state: QuizAppState) -> type[BaseHTTPRequestHandler]:
         def _render_quiz(self, session: QuizSession) -> None:
             session_id = self._session_id_from_query(urlparse(self.path).query)
             body = _page_shell(
-                title="Пройти викторину",
+                title="Режим изучения" if session.reveal_answers else "Пройти викторину",
                 content=_quiz_markup(session, session_id),
             )
-            self._send_html("Пройти викторину", body)
+            self._send_html("Вопросы", body)
 
         def _render_results(self, session: QuizSession, show_explanations: bool) -> None:
             assert session.results is not None
@@ -510,9 +608,9 @@ def _build_handler(state: QuizAppState) -> type[BaseHTTPRequestHandler]:
 
         def _start_session(self, form: dict[str, list[str]]) -> None:
             try:
-                count = int(form.get("count", ["10"])[0])
+                count = int(form.get("count", [str(state.default_count)])[0])
             except ValueError:
-                count = 10
+                count = state.default_count
 
             seed_raw = form.get("seed", [""])[0].strip()
             try:
@@ -521,9 +619,17 @@ def _build_handler(state: QuizAppState) -> type[BaseHTTPRequestHandler]:
                 seed = None
 
             shuffle_answers = form.get("shuffle_answers", ["off"])[0] == "on"
+            reveal_answers = form.get("reveal_answers", ["off"])[0] == "on"
+            range_spec = form.get("ranges", [""])[0].strip()
 
             try:
-                session_id = state.create_session(count=count, seed=seed, shuffle_answers=shuffle_answers)
+                session_id = state.create_session(
+                    count=count,
+                    seed=seed,
+                    shuffle_answers=shuffle_answers,
+                    range_spec=range_spec,
+                    reveal_answers=reveal_answers,
+                )
             except ValueError as error:
                 body = _page_shell(
                     title="Не удалось запустить викторину",
@@ -535,6 +641,10 @@ def _build_handler(state: QuizAppState) -> type[BaseHTTPRequestHandler]:
             self._redirect(f"/quiz?{urlencode({'session': session_id})}")
 
         def _submit_quiz(self, session: QuizSession, form: dict[str, list[str]]) -> None:
+            if session.reveal_answers:
+                self._redirect(f"/quiz?{urlencode({'session': self._session_id_from_query(urlparse(self.path).query) or ''})}")
+                return
+
             results: list[QuizResult] = []
             for index, question in enumerate(session.questions):
                 key = f"answer_{index}"
@@ -552,6 +662,8 @@ def _build_handler(state: QuizAppState) -> type[BaseHTTPRequestHandler]:
                     shuffle_answers=session.shuffle_answers,
                     mode="web",
                     history_path=state.history_path,
+                    range_spec=session.range_spec,
+                    reveal_answers=False,
                 )
                 session.history_saved = True
 
@@ -605,19 +717,38 @@ def _page_shell(title: str, content: str) -> str:
 </html>"""
 
 
-def _home_markup(pdf_name: str, question_count: int, history_entries: list[dict[str, Any]]) -> str:
+def _home_markup(
+    pdf_name: str,
+    question_count: int,
+    history_entries: list[dict[str, Any]],
+    default_count: int,
+    default_ranges: str,
+    default_reveal_answers: bool,
+    default_shuffle_answers: bool,
+) -> str:
     history_html = _history_markup(history_entries)
+    quick_counts = [value for value in (5, 10, 20, 30) if value <= question_count]
+    if question_count not in quick_counts and question_count < 30:
+        quick_counts.append(question_count)
+
+    preset_buttons = "".join(
+        f'<button class="preset-chip" type="button" onclick="quizSetCount({value})">{value}</button>'
+        for value in quick_counts
+    )
+    reveal_checked = "checked" if default_reveal_answers else ""
+    shuffle_checked = "checked" if default_shuffle_answers else ""
+
     return f"""
     <section class="masthead">
       <div class="eyebrow">Лаборатория Викторин</div>
       <h1>Превратите один PDF в бесконечную практику.</h1>
       <p class="lede">
         Локальное приложение извлекает отмеченные ответы из файла <strong>{html.escape(pdf_name)}</strong>,
-        перемешивает варианты, собирает викторины по 10 вопросов и сохраняет историю ваших результатов.
+        перемешивает варианты, собирает викторины по выбранным диапазонам и сохраняет историю ваших результатов.
       </p>
       <div class="stats">
         <div class="stat"><strong>{question_count}</strong>Распознанных вопросов</div>
-        <div class="stat"><strong>10</strong>Вопросов по умолчанию</div>
+        <div class="stat"><strong>{default_count}</strong>Вопросов по умолчанию</div>
         <div class="stat"><strong>Локально</strong>Работает полностью на вашем компьютере</div>
       </div>
     </section>
@@ -636,7 +767,7 @@ def _home_markup(pdf_name: str, question_count: int, history_entries: list[dict[
                   name="count"
                   min="1"
                   max="{question_count}"
-                  value="10"
+                  value="{default_count}"
                   oninput="quizSyncCount('question-count-input', 'question-count-slider')"
                 >
                 <div class="count-value">1-{question_count}</div>
@@ -647,25 +778,36 @@ def _home_markup(pdf_name: str, question_count: int, history_entries: list[dict[
                 type="range"
                 min="1"
                 max="{question_count}"
-                value="10"
+                value="{default_count}"
                 oninput="quizSyncCount('question-count-slider', 'question-count-input')"
               >
               <div class="preset-grid">
-                <button class="preset-chip" type="button" onclick="quizSetCount(5)">5</button>
-                <button class="preset-chip" type="button" onclick="quizSetCount(10)">10</button>
-                <button class="preset-chip" type="button" onclick="quizSetCount(20)">20</button>
-                <button class="preset-chip" type="button" onclick="quizSetCount(30)">30</button>
+                {preset_buttons}
               </div>
               <div class="range-hint">Можно ввести число вручную, подвигать ползунок или выбрать быстрое значение.</div>
             </div>
           </label>
           <label>
+            Диапазоны вопросов
+            <input
+              type="text"
+              name="ranges"
+              value="{html.escape(default_ranges)}"
+              placeholder="Например: 1-50; 120-160; 200"
+            >
+          </label>
+          <div class="range-hint">Оставьте поле пустым, чтобы использовать весь банк вопросов.</div>
+          <label>
             Seed (необязательно)
             <input type="text" name="seed" placeholder="Оставьте пустым для новой случайной выборки">
           </label>
           <label class="toggle">
-            <input type="checkbox" name="shuffle_answers" checked>
+            <input type="checkbox" name="shuffle_answers" {shuffle_checked}>
             Перемешивать варианты ответов в каждом вопросе
+          </label>
+          <label class="toggle">
+            <input type="checkbox" name="reveal_answers" {reveal_checked}>
+            Режим изучения: сразу показывать правильные ответы
           </label>
           <div class="button-row">
             <button type="submit">Запустить викторину</button>
@@ -688,13 +830,18 @@ def _history_markup(history_entries: list[dict[str, Any]]) -> str:
     cards: list[str] = ['<div class="history-list">']
     for entry in history_entries:
         score = entry["score"]
+        extra = []
+        if entry.get("range_spec"):
+            extra.append(f"диапазоны={html.escape(entry['range_spec'])}")
+        extra.append(f"перемешивание={_format_bool(entry['shuffle_answers'])}")
+        extra_text = " | ".join(extra)
         cards.append(
             f"""
             <article class="history-card">
               <h3>{score['correct']}/{score['total']} правильных</h3>
               <div class="history-meta">
                 {html.escape(entry['timestamp'])}<br>
-                {_format_mode(entry['mode'])} | перемешивание={_format_bool(entry['shuffle_answers'])}<br>
+                {_format_mode(entry['mode'])} | {extra_text}<br>
                 {score['percentage']:.1f}% · {html.escape(entry['pdf_name'])}
               </div>
             </article>
@@ -705,6 +852,9 @@ def _history_markup(history_entries: list[dict[str, Any]]) -> str:
 
 
 def _quiz_markup(session: QuizSession, session_id: str | None) -> str:
+    if session.reveal_answers:
+        return _study_markup(session)
+
     question_cards: list[str] = []
 
     for index, question in enumerate(session.questions, start=1):
@@ -751,6 +901,55 @@ def _quiz_markup(session: QuizSession, session_id: str | None) -> str:
     """
 
 
+def _study_markup(session: QuizSession) -> str:
+    question_cards: list[str] = []
+
+    for index, question in enumerate(session.questions, start=1):
+        options = []
+        for option_index, option in enumerate(question.options):
+            label = label_for_option(option_index)
+            correct_class = " correct" if option_index == question.correct_index else ""
+            note = '<div class="option-note">Правильный ответ</div>' if option_index == question.correct_index else ""
+            options.append(
+                f"""
+                <div class="option{correct_class}">
+                  <span><strong>{label}.</strong> {html.escape(option)}{note}</span>
+                </div>
+                """
+            )
+
+        question_cards.append(
+            f"""
+            <article class="question-card">
+              <div class="question-index">Вопрос {index} из {len(session.questions)}</div>
+              <h2>{html.escape(question.prompt)}</h2>
+              <div class="options">{''.join(options)}</div>
+              <div class="correct-banner">Правильный ответ: {html.escape(build_correct_answer_text(question))}</div>
+            </article>
+            """
+        )
+
+    range_text = (
+        f" Диапазоны: {html.escape(session.range_spec)}."
+        if session.range_spec
+        else ""
+    )
+
+    return f"""
+    <section class="masthead">
+      <div class="eyebrow">Режим Изучения</div>
+      <h1>Правильные ответы показаны сразу.</h1>
+      <p class="lede">Это не тестирование, а режим просмотра. Здесь отображаются только выбранные вопросы и их правильные ответы.{range_text}</p>
+      <div class="button-row">
+        <a class="button secondary" href="/">На главную</a>
+      </div>
+    </section>
+    <div class="stack" style="margin-top: 24px;">
+      {''.join(question_cards)}
+    </div>
+    """
+
+
 def _results_markup(session: QuizSession, session_id: str | None, show_explanations: bool) -> str:
     assert session.results is not None
     correct, total = score_results(session.results)
@@ -766,10 +965,7 @@ def _results_markup(session: QuizSession, session_id: str | None, show_explanati
             if result.selected_index is not None
             else "Пропущено"
         )
-        correct_answer = (
-            f"{label_for_option(result.question.correct_index)}. "
-            f"{html.escape(result.question.options[result.question.correct_index])}"
-        )
+        correct_answer = html.escape(build_correct_answer_text(result.question))
         explanation_html = ""
         if show_explanations and not result.is_correct:
             explanation_html = f'<div class="explanation">{html.escape(build_explanation(result))}</div>'
@@ -800,11 +996,13 @@ def _results_markup(session: QuizSession, session_id: str | None, show_explanati
         </section>
         """
 
+    range_suffix = f" | диапазоны: {html.escape(session.range_spec)}" if session.range_spec else ""
+
     return f"""
     <section class="masthead">
       <div class="eyebrow">Итоги</div>
       <h1>{correct}/{total} правильных.</h1>
-      <p class="lede">Последняя попытка уже сохранена в локальной истории результатов.</p>
+      <p class="lede">Последняя попытка уже сохранена в локальной истории результатов.{range_suffix}</p>
       <div class="stats">
         <div class="stat"><strong>{percentage:.1f}%</strong>Точность</div>
         <div class="stat"><strong>{len(wrong_results)}</strong>Ошибок</div>

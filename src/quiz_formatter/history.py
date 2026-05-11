@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import QuizResult
-from .quiz import label_for_option, score_results
+from .quiz import build_correct_answer_text, label_for_option, score_results
 
 DEFAULT_HISTORY_PATH = Path(".quiz-cache/history.jsonl")
 
@@ -19,6 +19,8 @@ def save_history(
     shuffle_answers: bool,
     mode: str,
     history_path: str | Path = DEFAULT_HISTORY_PATH,
+    range_spec: str | None = None,
+    reveal_answers: bool = False,
 ) -> dict[str, Any]:
     history_file = Path(history_path)
     history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -32,6 +34,8 @@ def save_history(
         "seed": seed,
         "shuffle_answers": shuffle_answers,
         "mode": mode,
+        "range_spec": range_spec or "",
+        "reveal_answers": reveal_answers,
         "score": {
             "correct": correct,
             "total": total,
@@ -73,13 +77,11 @@ def load_history(
 def _serialize_result(result: QuizResult) -> dict[str, Any]:
     question = result.question
     selected_index = result.selected_index
-    correct_index = question.correct_index
 
     return {
         "question_number": question.number,
         "prompt": question.prompt,
         "selected_label": label_for_option(selected_index) if selected_index is not None else None,
         "selected_text": question.options[selected_index] if selected_index is not None else None,
-        "correct_label": label_for_option(correct_index),
-        "correct_text": question.options[correct_index],
+        "correct_answer": build_correct_answer_text(question),
     }

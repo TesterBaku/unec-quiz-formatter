@@ -15,6 +15,11 @@
 - [x] Add a reproducible Windows executable build flow
 - [x] Build a shareable executable from the current app
 - [x] Verify the generated executable and document how to share it
+- [x] Add question-range filtering for quiz generation
+- [x] Add a study mode that shows correct answers immediately
+- [x] Expose both features in the web UI and CLI
+- [x] Verify the new modes and rebuild the distributable files
+- [x] Tighten the compact start-panel spacing between the title and first field
 
 # Review
 
@@ -30,3 +35,8 @@
 - Added a repeatable Windows packaging flow with `build_exe.ps1`, `launcher.py`, and `quiz_formatter.spec`.
 - Installed `PyInstaller`, built `dist\quiz_formatter.exe`, and verified the executable with `--parse-only` and `--show-history`.
 - Fixed a Windows console encoding crash in the frozen executable by configuring UTF-8 output at process startup.
+- Added question-range filtering for formats such as `1-50; 120-160; 200` in both CLI and web UI.
+- Added a study mode that shows the correct answer immediately instead of running a scored test.
+- Verified the new CLI flows with filtered quiz mode and study mode.
+- Verified the web handlers for range selection and study mode, then rebuilt the executable and shareable zip.
+- Tightened the compact start-panel spacing by zeroing the heading and form margins while keeping the panel gap at `2px`.

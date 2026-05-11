@@ -7,7 +7,14 @@ from .extractor import extract_pdf_text
 from .history import load_history, save_history
 from .models import QuizResult
 from .parser import parse_questions
-from .quiz import build_explanation, build_quiz, parse_answer, render_question, score_results
+from .quiz import (
+    build_explanation,
+    build_quiz,
+    filter_questions_by_ranges,
+    parse_answer,
+    render_question,
+    score_results,
+)
 from .web import serve_web_app
 
 
@@ -31,10 +38,20 @@ def main() -> int:
         print(f"Не удалось распознать вопросы теста из файла {pdf_path.name}.")
         return 1
 
+    try:
+        active_questions = filter_questions_by_ranges(questions, args.ranges)
+    except ValueError as error:
+        print(error)
+        return 1
+
+    if args.ranges and not active_questions:
+        print("По указанным диапазонам не найдено ни одного вопроса.")
+        return 1
+
     if args.parse_only:
-        print(f"Из файла {pdf_path.name} распознано вопросов: {len(questions)}.")
-        preview_count = min(args.preview, len(questions))
-        for question in questions[:preview_count]:
+        print(f"Из файла {pdf_path.name} распознано вопросов: {len(active_questions)}.")
+        preview_count = min(args.preview, len(active_questions))
+        for question in active_questions[:preview_count]:
             print()
             print(f"{question.number}. {question.prompt}")
             for index, option in enumerate(question.options):
@@ -50,11 +67,15 @@ def main() -> int:
             host=args.host,
             port=args.port,
             history_path=args.history_path,
+            default_count=args.count,
+            default_ranges=args.ranges,
+            default_reveal_answers=args.show_correct_from_start,
+            default_shuffle_answers=args.shuffle_answers,
         )
 
     try:
         quiz_questions = build_quiz(
-            questions,
+            active_questions,
             args.count,
             seed=args.seed,
             shuffle_answers=args.shuffle_answers,
@@ -62,6 +83,13 @@ def main() -> int:
     except ValueError as error:
         print(error)
         return 1
+
+    if args.show_correct_from_start:
+        print("Режим изучения: правильные ответы показаны сразу.")
+        for index, question in enumerate(quiz_questions, start=1):
+            print()
+            print(render_question(question, index, len(quiz_questions), reveal_correct=True))
+        return 0
 
     results: list[QuizResult] = []
 
@@ -93,6 +121,8 @@ def main() -> int:
         shuffle_answers=args.shuffle_answers,
         mode="cli",
         history_path=args.history_path,
+        range_spec=args.ranges,
+        reveal_answers=False,
     )
 
     return 0
@@ -105,6 +135,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("pdf", nargs="?", help="Путь к PDF-файлу. По умолчанию берётся первый PDF в папке.")
     parser.add_argument("--count", type=int, default=10, help="Сколько случайных вопросов задать.")
     parser.add_argument("--seed", type=int, default=None, help="Начальное значение для повторяемой выборки вопросов.")
+    parser.add_argument(
+        "--ranges",
+        default="",
+        help="Диапазоны номеров вопросов, например 1-50; 120-160; 200.",
+    )
+    parser.add_argument(
+        "--show-correct-from-start",
+        action="store_true",
+        help="Режим изучения: сразу показывать правильные ответы без тестирования.",
+    )
     parser.add_argument(
         "--no-shuffle-answers",
         action="store_false",
@@ -161,9 +201,10 @@ def _print_history(history_path: str) -> None:
     print("Последние попытки:")
     for entry in entries:
         score = entry["score"]
+        range_suffix = f" | диапазоны={entry['range_spec']}" if entry.get("range_spec") else ""
         print(
             f"- {entry['timestamp']} | {_format_mode(entry['mode'])} | {score['correct']}/{score['total']} "
-            f"({score['percentage']:.1f}%) | перемешивание={_format_bool(entry['shuffle_answers'])} | {entry['pdf_name']}"
+            f"({score['percentage']:.1f}%) | перемешивание={_format_bool(entry['shuffle_answers'])}{range_suffix} | {entry['pdf_name']}"
         )
 
 

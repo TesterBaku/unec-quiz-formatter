@@ -27,10 +27,13 @@ def test_save_history_and_load_recent_entries(tmp_path):
         shuffle_answers=True,
         mode="cli",
         history_path=history_path,
+        range_spec="1-10",
+        reveal_answers=False,
     )
 
     assert entry["score"]["correct"] == 0
-    assert entry["incorrect_questions"][0]["correct_text"] == "Bravo"
+    assert entry["incorrect_questions"][0]["correct_answer"] == "B - Bravo"
+    assert entry["range_spec"] == "1-10"
 
     loaded = load_history(history_path, limit=5)
     assert len(loaded) == 1
