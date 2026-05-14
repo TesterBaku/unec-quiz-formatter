@@ -8,4 +8,4 @@ __pycache__/
 .quiz-cache/
 build/
 dist/
-#release/
+release/
