@@ -1,4 +1,6 @@
-# Quiz Formatter With ChatGPT
+# UNEC Quiz Formatter
+
+A deterministic PDF-to-quiz tool for UNEC course materials. It parses questions straight from the PDF and matches answers against the embedded answer key — **no AI/LLM is used**.
 
 Приложение распознаёт вопросы с вариантами ответов из PDF, собирает случайные викторины, проверяет результаты и при необходимости показывает объяснения ошибок на основе ключа ответов, встроенного в PDF.
 

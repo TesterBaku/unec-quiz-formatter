@@ -33,7 +33,7 @@ Copy-Item $exePath (Join-Path $bundleDir "quiz_formatter.exe")
 Copy-Item $pdf.FullName (Join-Path $bundleDir $pdf.Name)
 
 $readme = @"
-Quiz Formatter With ChatGPT
+UNEC Quiz Formatter
 
 Included files:
 - quiz_formatter.exe

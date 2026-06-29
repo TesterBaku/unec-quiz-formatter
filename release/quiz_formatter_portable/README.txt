@@ -1,4 +1,4 @@
-﻿Quiz Formatter With ChatGPT
+﻿UNEC Quiz Formatter
 
 Included files:
 - quiz_formatter.exe
